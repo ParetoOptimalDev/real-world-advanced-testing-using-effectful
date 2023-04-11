@@ -1,5 +1,5 @@
 {
-  description = "srid/haskell-template: Nix template for Haskell projects";
+  description = "srid/real-world-advanced-testing-using-effectful: Nix template for Haskell projects";
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
     systems.url = "github:nix-systems/default";
@@ -25,7 +25,7 @@
         # has only one.
         # See https://github.com/srid/haskell-flake/blob/master/example/flake.nix
         haskellProjects.default = {
-          # packages.haskell-template.root = ./.;  # Auto-discovered by haskell-flake
+          # packages.real-world-advanced-testing-using-effectful.root = ./.;  # Auto-discovered by haskell-flake
           overrides = self: super: { };
           devShell = {
             tools = hp: {
@@ -83,14 +83,14 @@
           run = {
             description = "Run the project with ghcid auto-recompile";
             exec = ''
-              ghcid -c "cabal repl exe:haskell-template" --warnings -T :main
+              ghcid -c "cabal repl exe:real-world-advanced-testing-using-effectful" --warnings -T :main
             '';
             category = "Primary";
           };
         };
 
         # Default package.
-        packages.default = config.haskellProjects.default.outputs.localPackages.haskell-template;
+        packages.default = config.haskellProjects.default.outputs.localPackages.real-world-advanced-testing-using-effectful;
 
         checks = config.haskellProjects.default.outputs.checks;
 
