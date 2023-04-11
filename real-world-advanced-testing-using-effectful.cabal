@@ -87,6 +87,13 @@ common shared
     , shower
     , time
     , with-utf8
+    , effectful
+    , effectful-th
+    , effectful-plugin
+    , aeson
+    , http-conduit
+    , http-client-tls
+    , optparse-applicative
 
   hs-source-dirs:     src
   default-language:   Haskell2010
