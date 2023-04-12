@@ -92,6 +92,7 @@ common shared
     , effectful-plugin
     , aeson
     , http-conduit
+    , http-client
     , http-client-tls
     , optparse-applicative
 
