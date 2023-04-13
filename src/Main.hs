@@ -1,46 +1,57 @@
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE QuasiQuotes #-}
+module Main where
+
+import Data.Aeson.QQ
 import qualified Data.Aeson as Aeson
 import Effectful
+import Effectful.TH
 import Effectful.Dispatch.Dynamic
 import Effectful.State.Static.Local
-import Control.Exception (IOException)
-import Control.Monad.Catch (catch)
-import qualified System.IO as IO
 import Effectful.Error.Static
 import qualified Data.Map.Strict as M
-import Effectful.State.Static.Local
-import Prelude hiding (modify, evalState)
+import Prelude hiding (modify, evalState, gets)
+import Optics
+import Data.Aeson.Optics
+
+newtype Url = Url String deriving newtype (Eq, Ord, Show)
+newtype HttpError = HttpError String deriving newtype Show
 
 data Http :: Effect where
-  HttpGet   :: String -> Http m Aeson.Value
-  HttpPost  :: String -> Aeson.Object -> Http m Aeson.Value
-
-newtype HttpError = HttpError String deriving Show
+  HttpGet  :: Url -> Http m Aeson.Value
+makeEffect ''Http
 
 data Spotify :: Effect where
   SearchTrack :: String -> Spotify m Aeson.Value
+  -- Auth :: Spotify m () -- TODO create this and if an http request returns 401 this should get called, not sure how to enforce that?
+makeEffect ''Spotify
 
-type instance DispatchOf Http = Dynamic
-type instance DispatchOf Spotify = Dynamic
+data Track = Track { trackName :: String } deriving stock (Ord, Eq, Show)
 
-newtype SpotifyError = SpotifyError String deriving Show
+type instance DispatchOf Http = 'Dynamic
+type instance DispatchOf Spotify = 'Dynamic
+
+newtype SpotifyError = SpotifyError String deriving newtype Show
 
 runHttpPure
-  :: (Error HttpError :> es, Error SpotifyError :> es)
-  => M.Map String Aeson.Value
-  -> Eff (Http : Spotify : es) a
+  :: (Error HttpError :> es)
+  => M.Map Url Aeson.Value
+  -> Eff (Http : es) a
   -> Eff es a
 runHttpPure db0 = reinterpret (evalState db0) $ \_ -> \case
-  HttpPost path req -> case req of
-    Aeson.Object obj -> do
-      modify $ M.insert path (Aeson.String "success")
-      case path of
-        "https://api.spotify.com/v1/search?type=track&q=" -> do
-          let query = case M.lookup "q" obj of
-                Just (Aeson.String q) -> q
-                _                     -> ""
-          pure $ Aeson.object ["tracks" Aeson..= Aeson.object ["items" Aeson..= Aeson.String query]]
-        _ -> throwError $ HttpError $ "Invalid path: " ++ path
-    _ -> throwError $ HttpError "Invalid request"
+  HttpGet url -> gets (M.lookup url) >>= \case
+    Just response -> pure response
+    Nothing       -> throwError . HttpError $ "no response found"
+
+runHttpPureNull
+  :: (Error HttpError :> es)
+  => Eff (Http : es) a
+  -> Eff es a
+runHttpPureNull = interpret $ \_ -> \case
+  HttpGet _ -> pure Aeson.Null
+
+playlistSearchUrl :: String
+playlistSearchUrl = "https://api.spotify.com/v1/search?type=track&q="
 
 runSpotifyPure
   :: (Http :> es, Error SpotifyError :> es)
@@ -48,20 +59,42 @@ runSpotifyPure
   -> Eff es a
 runSpotifyPure = interpret $ \_ -> \case
   SearchTrack query -> do
-    let req = Aeson.object ["q" Aeson..= query]
-    res <- httpPost "https://api.spotify.com/v1/search?type=track&q=" req
-           `catchError` \e -> throwError $ SpotifyError e
-    case M.lookup "tracks" (Aeson.object ["tracks" Aeson..= res]) of
-      Just tracks -> pure tracks
-      Nothing     -> throwError $ SpotifyError "Failed to parse response"
+    res <- httpGet (Url (playlistSearchUrl <> query))
+    pure res
+    -- TODO this logic shouldn't be here, only return the response right?
+    -- let tracks = res ^.. _Array % traversed % _String & fmap (Track . toString)
+    -- if length tracks == 0 then
+    --   throwError (SpotifyError "no tracks found")
+    --   else pure tracks
+    -- TODO but if this is equivalent to just calling httpGet... what's the point?
+    -- I guess we can check if it's well formed and has a 200 or 401 here?
 
-action :: (Http :> es, Spotify :> es) => Eff es Bool
-action = do
-  res <- searchTrack "effectful"
-  case M.lookup "items" res of
-    Just (Aeson.String query) -> httpPost "https://example.com/" (Aeson.object ["q" Aeson..= query]) >> pure True
-    _                         -> pure False
+-- the benefit here is that now searchTrackProgram can be used in either pure or impure interpreters
+-- no impedance mismatch
+-- I *think* this is the correct state of things and why you don't often want to make your own effects
+-- for instance... I could have done without the spotify effect I think? Unless maybe I was going to add auth?
+-- I was focused on how useful having a data type describing each operation was... too much maybe?
+-- or maybe the other was is correct? maybe something different?
+searchTrackProgram :: (Http :> es, Error SpotifyError :> es, Spotify :> es) => String -> Eff es [Track]
+searchTrackProgram query = do
+  trackResponse <- searchTrack query
+  let tracks = trackResponse ^.. _Array % traversed % _String & fmap (Track . toString)
+  if length tracks == 0 then
+    throwError (SpotifyError "no tracks found")
+    else pure tracks
 
+main :: IO ()
 main = do
-  let db = M.empty
-  print $ runPureEff $ runSpotifyPure $ runHttpPure db $ action
+
+  let httpMock :: [(Url, Aeson.Value)] = [((Url (playlistSearchUrl <> "effectful")),[aesonQQ|["foo"]|])]
+  -- data HttpMockResponse = Http200 [(Url, Aeson.Value)] | Http401
+  -- TODO then modify the http interpreter to look for the status code first and throw an error for Http401
+  -- let httpMock :: [(Url, Aeson.Value)] = [((Url (playlistSearchUrl <> "effectful")),[aesonQQ|["foo"]|])]
+
+  print $ searchTrackProgram "effectful"
+    & runSpotifyPure
+    & runErrorNoCallStack @SpotifyError
+    & runHttpPure (M.fromList httpMock)
+    -- & runHttpPureNull
+    & runErrorNoCallStack @HttpError
+    & runPureEff

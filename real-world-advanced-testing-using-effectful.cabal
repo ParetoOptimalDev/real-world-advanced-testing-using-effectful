@@ -75,7 +75,12 @@ common shared
 
   build-depends:
     , containers
+    , unordered-containers
     , exceptions
+    , optics-core
+    , optics
+    , aeson-optics
+    , aeson-qq
     , aeson
     , optparse-generic
     , optparse-applicative
@@ -90,7 +95,6 @@ common shared
     , relude        >=1.0
     , shower
     , time
-    , with-utf8
     , effectful
     , effectful-th
     , effectful-plugin
